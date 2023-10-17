@@ -5,16 +5,18 @@ from PyQt5.QtGui import QImage, QPixmap, QPainter, QIcon
 from PyQt5.QtMultimedia import QMediaContent,QMediaPlayer
 from PyQt5.QtCore import pyqtSlot,QUrl,QDir, QFileInfo,Qt,QEvent
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel,QSpacerItem, QSizePolicy, QPushButton
-from PyQt5.QtGui import QFont, QEnterEvent, QPainter, QColor, QPen
-
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QRect
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QHBoxLayout, QLabel,QSpacerItem, QSizePolicy, QPushButton
+from PyQt5.QtGui import QFont, QEnterEvent, QPainter, QColor, QPen, QBrush
+from plot import Windows
 import sys
 import os
 from threading import Thread
 import cv2, imutils
 import time
 import random
+from queue import Queue
+
 
 def cvImgtoQtImg(cvImg):  # 定义opencv图像转PyQt图像的函数
     QtImgBuf = cv2.cvtColor(cvImg, cv2.COLOR_BGR2BGRA)
@@ -33,54 +35,90 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.ui.setupUi(self)      #构造UI界面
         # style 1: window can be stretched
         self.setWindowFlags(Qt.CustomizeWindowHint | Qt.WindowStaysOnTopHint)
-
+        self.data1 = Queue()
+        self.data2 = Queue()
+        self.data3 = Queue()
         # style 2: window can not be stretched
         # self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint
         #                     | Qt.WindowSystemMenuHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
         # self.setWindowOpacity(0.85)  # Transparency of window
         
+
         self.screen1 = self.ui.label2
         self.screen2 = self.ui.label_3
+        self.screen3 = self.ui.label_2
+        ## set canvas
+        self.canvas = QtGui.QPixmap(800, 1200)
+        self.canvas.fill(Qt.white)
+        # self.ui.label_2.setPixmap(canvas) #创建canvas，并加入label作为画板
+        ### canvas settings
+        self.max_size = 10
+        self.width = 60
+        self.height = 30
+        self.rect1 = []; self.color1 = []
+        self.rect2 = []; self.color2 = []
+        self.rect3 = []; self.color3 = []
+
         self.btn_play = self.ui.pushButton
         self.th = {}
         self.ui.pushButton.clicked.connect(self.run_threads)
         self.ui.pushButton_2.clicked.connect(self.stop_action)
+        self.ui.pushButton_3.clicked.connect(self.kill_threads)
+   
         
     def video_stop(self):
-            self.bClose1 = True
-            self.bClose2 = True
+        self.bClose1 = True
+        self.bClose2 = True
     
+    def video_start(self):
+        self.bClose1 = False
+        self.bClose2 = False
+
     def stop_action(self):
         if self.stop_flag == 0:
             self.stop_flag = 1
-            
         else:
             self.stop_flag = 0
             
     def run_threads(self):
-        self.th["video1"] = Thread(target = self.onClick, args = (1,))
-        self.th["video2"] = Thread(target = self.onClick, args = (2,))  
+        self.th["video1"] = Thread(target = self.onClick_1, args = (1,))
+        self.th["video2"] = Thread(target = self.onClick_2, args = (2,))
+        # self.th["canvas"] = Thread(target = self.onClick_2, args = (2,))
         self.th["video1"].start()
         self.th["video2"].start()
 
-    def onClick(self, label): #初始化点击事件
+    def kill_threads(self):
+        if self.bClose1 and self.bClose2:    ### stop
+            self.video_start()
+            self.th["video1"].join()
+            self.th["video2"].join()
+            self.video_stop()
+        else:
+            self.video_stop()
+
+    def onClick_1(self, label): #初始化点击事件
         print("label: ", label)
         if label == 1:
             bClose = self.bClose1
             screen = self.screen1
-            video_path = r'turn_right_1st.mp4'
+            video_path = r'oceans.mp4'
         if label == 2:
             bClose = self.bClose2
             screen = self.screen2
-            video_path = r'turn_right_3rd.mp4'
+            video_path = r'oceans.mp4'
         cap = cv2.VideoCapture(video_path)  #获取视频对象
         fps = cap.get(cv2.CAP_PROP_FPS) 
         if not cap.isOpened():
             print("Cannot open Video File")
             exit()
         num = 0
+        ### prepare
+        self.Plot()
+        # self.ui.label_2.show()
         while not bClose:
             ret, frame = cap.read()  # 逐帧读取影片
+            if self.bClose1:
+                break
             if not ret:
                 if frame is None:
                     print("The video has end.")
@@ -91,6 +129,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             QtImg = cvImgtoQtImg(frame)  # 将帧数据转换为PyQt图像格式
             screen.setPixmap(QtGui.QPixmap.fromImage(QtImg))  # 在ImgDisp显示图像
             size = QtImg.size()
+            size = QtCore.QSize(600, 400)
+            # print("size: ", size)
             screen.resize(size)  # 根据帧大小调整标签大小
             # self.resize(size)         # 根据帧大小调整窗口大小
             self.btn_play.hide()      # 隐藏播放按钮
@@ -99,13 +139,77 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self.ui.label.setText(text)
             num += 1
             screen.show()        # 刷新界面
+            self.update()
+            self.Plot()
+            # self.ui.label_2.show()
             while self.stop_flag == 1:#暂停的动作
                 cv2.waitKey(int(1000/fps))#休眠一会，因为每秒播放24张图片，相当于放完一张图片后等待41ms
             cv2.waitKey(int(500 / fps))  # 休眠一会，确保每秒播放fps帧
 
         # 完成所有操作后，释放捕获器
         cap.release()
-        
+
+    def onClick_2(self, label): #初始化点击事件
+        print("label: ", label)
+        if label == 1:
+            bClose = self.bClose1
+            screen = self.screen1
+            video_path = r'oceans.mp4'
+        if label == 2:
+            bClose = self.bClose2
+            screen = self.screen2
+            video_path = r'oceans.mp4'
+        cap = cv2.VideoCapture(video_path)  #获取视频对象
+        fps = cap.get(cv2.CAP_PROP_FPS) 
+        if not cap.isOpened():
+            print("Cannot open Video File")
+            exit()
+        num = 0
+        ### prepare
+       
+        while not bClose:
+            ret, frame = cap.read()  # 逐帧读取影片
+            if self.bClose2:
+                break
+            if not ret:
+                if frame is None:
+                    print("The video has end.")
+                else:
+                    print("Read video error!")
+                break
+            idx = random.randint(1, 4)
+            QtImg = cvImgtoQtImg(frame)  # 将帧数据转换为PyQt图像格式
+            screen.setPixmap(QtGui.QPixmap.fromImage(QtImg))  # 在ImgDisp显示图像
+            size = QtImg.size()
+            size = QtCore.QSize(600, 400)
+            print("size: ", size)
+            screen.resize(size)  # 根据帧大小调整标签大小
+            # self.resize(size)         # 根据帧大小调整窗口大小
+            self.btn_play.hide()      # 隐藏播放按钮
+            if num % 10 == 0:
+                text = self.chooseText(idx)
+                self.ui.label.setText(text)
+            num += 1
+            screen.show()        # 刷新界面
+
+            while self.stop_flag == 1:#暂停的动作
+                cv2.waitKey(int(1000/fps))#休眠一会，因为每秒播放24张图片，相当于放完一张图片后等待41ms
+            cv2.waitKey(int(500 / fps))  # 休眠一会，确保每秒播放fps帧
+
+        # 完成所有操作后，释放捕获器
+        cap.release()
+
+    def ChooseColor(self, data):
+        if data == 0:
+            color = QColor(0,225,225)
+        if data == 1:
+            color = QColor(225,225, 0)
+        if data == 2:
+            color = QColor(225, 0, 225)
+        if data == 3:
+            color = QColor(0, 128, 128)
+        return color
+
     def chooseText(self, idx):
         text = ''
         if idx == 1:
@@ -180,179 +284,90 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 break
                 print('Loop break')
 
+    def update(self):
+        tdata1 = random.randint(0,3)
+        tdata2 = random.randint(0,3)
+        tdata3 = random.randint(0,3)
+        if self.data1.qsize() > self.max_size:
+            print("queue oversize!")
+        elif self.data1.qsize() == self.max_size:
+            _ = self.data1.get()
+        if self.data1.qsize() < self.max_size:
+            self.data1.put(tdata1)  ### 插入队尾
 
-    def load_setting(self):
-        config_file = 'config/setting.json'
-        if not os.path.exists(config_file):
-            iou = 0.26
-            conf = 0.33
-            rate = 10
-            check = 0
-            savecheck = 0
-            new_config = {"iou": iou,
-                          "conf": conf,
-                          "rate": rate,
-                          "check": check,
-                          "savecheck": savecheck
-                          }
-            new_json = json.dumps(new_config, ensure_ascii=False, indent=2)
-            with open(config_file, 'w', encoding='utf-8') as f:
-                f.write(new_json)
+        if self.data2.qsize() > self.max_size:
+            print("queue oversize!")
+        elif self.data2.qsize() == self.max_size:
+            _ = self.data2.get()
+        if self.data2.qsize() < self.max_size:
+            self.data2.put(tdata2)  ### 插入队尾
+
+        if self.data3.qsize() > self.max_size:
+            print("queue oversize!")
+        elif self.data3.qsize() == self.max_size:
+            _ = self.data3.get()
+        if self.data3.qsize() < self.max_size:
+            self.data3.put(tdata3)  ### 插入队尾
+
+    def DrawRectangle(self, data, color_list, rect_list, pos_x=0, pos_y=500):
+        brush = QBrush(Qt.SolidPattern)
+        ## move right
+        color_list.pop()
+        rect_list.pop()
+        for i in range(0, self.max_size-1):
+            brush.setColor(color_list[i])
+            self.painter.setBrush(brush)
+            rect = QRect(pos_x+self.width*(i+1), pos_y, self.width, self.height)
+            # print("i: ", i)
+            self.painter.drawRect(rect)
+        ## render new color
+        color = self.ChooseColor(data)
+        color_list.insert(0, color)
+        # print("color: ", color)
+        brush = QBrush(Qt.SolidPattern)
+        brush.setColor(color)
+        self.painter.setBrush(brush)
+        rect = QRect(pos_x, pos_y, self.width, self.height)
+        rect_list.insert(0, rect)
+        self.painter.drawRect(rect)
+
+    def Plot(self):
+        ### base
+        if self.data1.qsize() == 0:
+            self.painter_base = QPainter(self.canvas)
+            self.painter_base.begin(self)
+            self.painter_base.setPen(QPen(Qt.white, 1, Qt.SolidLine))
+            for i in range(0, self.max_size):
+                brush = QBrush(Qt.SolidPattern)
+                brush.setColor(QColor(255,255,255))
+                self.painter_base.setBrush(brush)
+                rect1 = QRect(0+self.width*i, 530, self.width, self.height)
+                rect2 = QRect(0+self.width*i, 580, self.width, self.height)
+                rect3 = QRect(0+self.width*i, 630, self.width, self.height)
+                # rect.setColor(Qt.blue)
+                self.rect1.append(rect1); self.rect2.append(rect2); self.rect3.append(rect3)
+                self.color1.append(QColor(255,255,255)); self.color2.append(QColor(255,255,255)); self.color3.append(QColor(255,255,255))
+                self.painter_base.drawRect(rect1); self.painter_base.drawRect(rect2); self.painter_base.drawRect(rect3)
+            self.painter_base.end()
+            self.screen3.setPixmap(self.canvas)
+            self.screen3.show()
         else:
-            config = json.load(open(config_file, 'r', encoding='utf-8'))
-            if len(config) != 5:
-                iou = 0.26
-                conf = 0.33
-                rate = 10
-                check = 0
-                savecheck = 0
-            else:
-                iou = config['iou']
-                conf = config['conf']
-                rate = config['rate']
-                check = config['check']
-                savecheck = config['savecheck']
-        self.confSpinBox.setValue(conf)
-        self.iouSpinBox.setValue(iou)
-        self.rateSpinBox.setValue(rate)
-        self.checkBox.setCheckState(check)
-        self.det_thread.rate_check = check
-        self.saveCheckBox.setCheckState(savecheck)
-        self.is_save()
-
-    def change_val(self, x, flag):
-        if flag == 'confSpinBox':
-            self.confSlider.setValue(int(x*100))
-        elif flag == 'confSlider':
-            self.confSpinBox.setValue(x/100)
-            self.det_thread.conf_thres = x/100
-        elif flag == 'iouSpinBox':
-            self.iouSlider.setValue(int(x*100))
-        elif flag == 'iouSlider':
-            self.iouSpinBox.setValue(x/100)
-            self.det_thread.iou_thres = x/100
-        elif flag == 'rateSpinBox':
-            self.rateSlider.setValue(x)
-        elif flag == 'rateSlider':
-            self.rateSpinBox.setValue(x)
-            self.det_thread.rate = x * 10
-        else:
-            pass
-
-    def statistic_msg(self, msg):
-        self.statistic_label.setText(msg)
-        # self.qtimer.start(3000)
-
-    def show_msg(self, msg):
-        self.runButton.setChecked(Qt.Unchecked)
-        self.statistic_msg(msg)
-        if msg == "Finished":
-            self.saveCheckBox.setEnabled(True)
-
-    def change_model(self, x):
-        self.model_type = self.comboBox.currentText()
-        self.det_thread.weights = "./pt/%s" % self.model_type
-        self.statistic_msg('Change model to %s' % x)
-
-    def open_file(self):
-
-        config_file = 'config/fold.json'
-        # config = json.load(open(config_file, 'r', encoding='utf-8'))
-        config = json.load(open(config_file, 'r', encoding='utf-8'))
-        open_fold = config['open_fold']
-        if not os.path.exists(open_fold):
-            open_fold = os.getcwd()
-        name, _ = QFileDialog.getOpenFileName(self, 'Video/image', open_fold, "Pic File(*.mp4 *.mkv *.avi *.flv "
-                                                                          "*.jpg *.png)")
-        if name:
-            self.det_thread.source = name
-            self.statistic_msg('Loaded file：{}'.format(os.path.basename(name)))
-            config['open_fold'] = os.path.dirname(name)
-            config_json = json.dumps(config, ensure_ascii=False, indent=2)
-            with open(config_file, 'w', encoding='utf-8') as f:
-                f.write(config_json)
-            self.stop()
-
-    def max_or_restore(self):
-        if self.maxButton.isChecked():
-            self.showMaximized()
-        else:
-            self.showNormal()
-
-    def run_or_continue(self):
-        self.det_thread.jump_out = False
-        if self.runButton.isChecked():
-            self.saveCheckBox.setEnabled(False)
-            self.det_thread.is_continue = True
-            if not self.det_thread.isRunning():
-                self.det_thread.start()
-            source = os.path.basename(self.det_thread.source)
-            source = 'camera' if source.isnumeric() else source
-            self.statistic_msg('Detecting >> model：{}，file：{}'.
-                               format(os.path.basename(self.det_thread.weights),
-                                      source))
-        else:
-            self.det_thread.is_continue = False
-            self.statistic_msg('Pause')
-
-    def stop(self):
-        self.det_thread.jump_out = True
-        self.saveCheckBox.setEnabled(True)
-
-
-    @staticmethod
-    def show_image(img_src, label):
-        try:
-            ih, iw, _ = img_src.shape
-            w = label.geometry().width()
-            h = label.geometry().height()
-            # keep original aspect ratio
-            if iw/w > ih/h:
-                scal = w / iw
-                nw = w
-                nh = int(scal * ih)
-                img_src_ = cv2.resize(img_src, (nw, nh))
-
-            else:
-                scal = h / ih
-                nw = int(scal * iw)
-                nh = h
-                img_src_ = cv2.resize(img_src, (nw, nh))
-
-            frame = cv2.cvtColor(img_src_, cv2.COLOR_BGR2RGB)
-            img = QImage(frame.data, frame.shape[1], frame.shape[0], frame.shape[2] * frame.shape[1],
-                         QImage.Format_RGB888)
-            label.setPixmap(QPixmap.fromImage(img))
-
-        except Exception as e:
-            print(repr(e))
-
-    def show_statistic(self, statistic_dic):
-        try:
-            self.resultWidget.clear()
-            statistic_dic = sorted(statistic_dic.items(), key=lambda x: x[1], reverse=True)
-            statistic_dic = [i for i in statistic_dic if i[1] > 0]
-            results = [' '+str(i[0]) + '：' + str(i[1]) for i in statistic_dic]
-            self.resultWidget.addItems(results)
-
-        except Exception as e:
-            print(repr(e))
-
-    def closeEvent(self, event):
-        self.det_thread.jump_out = True
-        config_file = 'config/setting.json'
-        config = dict()
-        config['iou'] = self.confSpinBox.value()
-        config['conf'] = self.iouSpinBox.value()
-        config['rate'] = self.rateSpinBox.value()
-        config['check'] = self.checkBox.checkState()
-        config['savecheck'] = self.saveCheckBox.checkState()
-        config_json = json.dumps(config, ensure_ascii=False, indent=2)
-        with open(config_file, 'w', encoding='utf-8') as f:
-            f.write(config_json)
-        MessageBox(
-            self.closeButton, title='Tips', text='Closing the program', time=2000, auto=True).exec_()
-        sys.exit(0)
+            ### dynamic
+            self.painter = QPainter(self.canvas)#画图类
+            self.painter.begin(self)
+            self.painter.setPen(QPen(Qt.white, 1, Qt.SolidLine))
+            data1 = self.data1.queue[-1]
+            data2 = self.data2.queue[-1]
+            data3 = self.data3.queue[-1]
+            print("data1: ", data1)
+            self.DrawRectangle(data1, self.color1, self.rect1, 0, 530)
+            self.DrawRectangle(data2, self.color2, self.rect2, 0, 580)
+            self.DrawRectangle(data3, self.color3, self.rect3, 0, 630)
+            # print("data: ", self.data.queue[-1])
+            # color = self.ChooseColor(self.data.queue[-1])
+            self.painter.end()
+            self.screen3.setPixmap(self.canvas)
+            self.screen3.show()
 
 class TitleBar(QWidget):
 
@@ -685,7 +700,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     # app.setStyleSheet(StyleSheet)
     mainWnd = FramelessWindow()
-    mainWnd.setWindowTitle('测试标题栏')
+    mainWnd.setWindowTitle('Demo')
     mainWnd.setWindowIcon(QIcon('Qt.ico'))
     mainWnd.resize(QSize(2250,1480))
     mainWnd.setWidget(MainWindow(mainWnd))  # 把自己的窗口添加进来
